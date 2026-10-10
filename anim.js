@@ -1,4 +1,21 @@
 
+// cycle length (seconds) and the fraction spent animating; the rest holds the final frame
+window.__PLATE_HOLD = {
+  'hero-art':[9.0,1.00],
+  'v1-art':  [6.0,0.55],
+  'v2-art':  [4.6,0.70],
+  'v3-art':  [6.6,0.55],
+  'v4-art':  [6.0,1.00],
+  'v5-art':  [5.5,0.70],
+  'v6-art':  [7.0,0.72],
+  'v7-art':  [5.4,0.70],
+  'v8-art':  [6.0,0.60],
+  'v9-art':  [5.0,0.60],
+  'v10-art': [5.6,0.60],
+  'v11-art': [6.0,0.62],
+  'v12-art': [7.0,0.72]
+};
+
 // ---------- toolkit ----------
 function A(id, draw){
   var cv=document.getElementById(id); if(!cv) return;
@@ -14,7 +31,14 @@ function A(id, draw){
     new IntersectionObserver(function(e){ on=e[0].isIntersecting; },{threshold:0.01}).observe(cv);
   } else on=true;
   var R=matchMedia('(prefers-reduced-motion: reduce)').matches, t0=performance.now();
-  (function lp(n){ if(on){ try{ draw(c,W,H,(n-t0)/1000,R); }catch(e){} } requestAnimationFrame(lp); })(t0);
+  var FZ=(function(){ var m=location.search.match(/freeze=([0-9.]+)/); return m?parseFloat(m[1]):null; })();
+  var HOLD=window.__PLATE_HOLD && window.__PLATE_HOLD[id];
+  function held(sec){
+    if(!HOLD) return sec;
+    var cyc=HOLD[0], rest=cyc*HOLD[1], k=sec%cyc;
+    return k<rest ? k : rest;
+  }
+  (function lp(n){ if(on){ try{ draw(c,W,H, FZ!==null?FZ:held((n-t0)/1000), R); }catch(e){} } requestAnimationFrame(lp); })(t0);
 }
 function bx(c,x,y,w,h,r){ r=Math.min(r,w/2,h/2);
   c.beginPath(); c.moveTo(x+r,y);
@@ -212,8 +236,8 @@ A('v3-art', function(c,W,H,t){
 // ---------- 4 CSA2 modes ----------
 A('v4-art', function(c,W,H,t){
   c.clearRect(0,0,W,H); gd(c,W,H,48,.14);
-  var L=9, bw=Math.min(150,W*.15), bh=Math.min(24,(H-150)/L);
-  var ox=W*.16, oy=54;
+  var L=9, bw=Math.min(178,W*.19), bh=Math.min(24,(H-150)/L);
+  var ox=W*.13, oy=54;
   var MODES=['full','reindex','reuse'];
   var PER=6, ph=(t%PER)/PER, mi=Math.floor(ph*3)%3, mode=MODES[mi];
   var pulse=.5+.5*Math.sin(t*2);
@@ -234,14 +258,14 @@ A('v4-art', function(c,W,H,t){
     else col='rgba(251,191,36,.85)';
     c.globalAlpha= on?1:0.28; c.fillStyle=col; c.fill(); c.globalAlpha=1;
     if(on){ c.strokeStyle='rgba(238,243,255,.9)'; c.lineWidth=1.6; c.stroke(); }
-    M(c,10); c.textAlign='left'; c.fillStyle= on?'rgba(4,6,12,.95)':'rgba(143,162,196,.75)';
-    c.fillText(m==='enc'?'encoder':(m+' mode'), ox+10, y+bh/2+4);
+    M(c,9.5); c.textAlign='left'; c.fillStyle= on?'rgba(4,6,12,.95)':'rgba(143,162,196,.75)';
+    c.fillText(m==='enc'?'encoder':(m+' mode'), ox+9, y+bh/2+4);
   }
   // legend
-  var lx=W*.40, ly=H*.26;
-  var items=[['Full','computes main KV + indexer K + fresh top-K','rgba(77,107,254,1)'],
-             ['Reindex','reuses KV, rescores, fresh top-K','rgba(34,211,238,1)'],
-             ['Reuse','reuses KV and top-K, no indexing','rgba(251,191,36,1)']];
+  var lx=W*.44, ly=H*.24;
+  var items=[['Full','builds KV + indexer K + top-K','rgba(77,107,254,1)'],
+             ['Reindex','reuses KV, new top-K','rgba(34,211,238,1)'],
+             ['Reuse','reuses KV and top-K','rgba(251,191,36,1)']];
   for(var k=0;k<3;k++){
     var iy=ly+k*70, on2=(items[k][0].toLowerCase()===mode);
     c.globalAlpha= on2?1:0.35;
