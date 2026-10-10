@@ -1,849 +1,204 @@
-
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Standard LLM vs DeepSeek V4.1 — Visual Comparison</title>
-<meta name="description" content="A visual, side-by-side comparison of a standard transformer LLM and DeepSeek V4.1-Flash: CED encoder-decoder, CSA2 cross-layer KV reuse, FP4 cache, Engram, DSpark, SWA Bounded Replay.">
+<title>Standard LLM vs DeepSeek V4.1 — an Illustrated Comparison</title>
+<meta name="description" content="An illustrated, animated comparison of a standard transformer LLM and DeepSeek V4.1-Flash: CED, CSA2, FP4 cache, Engram, DSpark.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="progress"></div>
-
-<header class="topbar">
-  <div class="wrap">
-    <div class="brand">Standard LLM <span>vs</span> DeepSeek V4.1</div>
-    <div class="spacer"></div>
-    <a class="mini" href="https://how-llms-work.dshai.reggilion.com">← Part 1: How LLMs work</a>
-  </div>
-</header>
-
-<nav class="toc" id="toc">
-  <h4>Contents</h4>
-  <a href="#hero"><b>0</b> The thesis</a>
-  <a href="#baseline"><b>1</b> The baseline</a>
-  <a href="#whatchanged"><b>2</b> What changed</a>
-  <a href="#stack"><b>3</b> Side-by-side stack</a>
-  <a href="#ced"><b>4</b> CED</a>
-  <a href="#cedplay"><b>5</b> CED, animated</a>
-  <a href="#csa2"><b>6</b> CSA2 modes</a>
-  <a href="#indexer"><b>7</b> Sparse indexer</a>
-  <a href="#kvmath"><b>8</b> KV cache math</a>
-  <a href="#fp4"><b>9</b> FP4 cache</a>
-  <a href="#swa"><b>10</b> SWA Bounded Replay</a>
-  <a href="#mhc"><b>11</b> Residuals & mHC</a>
-  <a href="#engram"><b>12</b> Engram</a>
-  <a href="#dspark"><b>13</b> DSpark</a>
-  <a href="#multimodal"><b>14</b> Vision</a>
-  <a href="#decode"><b>15</b> Decode cost</a>
-  <a href="#race"><b>16</b> Live: prefill race</a>
-  <a href="#shrink"><b>17</b> Live: cache shrink</a>
-  <a href="#table"><b>18</b> Full spec table</a>
-  <a href="#why"><b>19</b> What it buys</a>
-  <a href="#limits"><b>20</b> Limits & caveats</a>
-  <a href="#sources"><b>21</b> Sources</a>
-</nav>
-
-<main>
-
-<section class="hero" id="hero">
-  <div class="wrap">
-    <div class="eyebrow">Part 2 of 2 · Visual comparison</div>
+<div id="bar"></div>
+<div class="nav"><a href="https://how-llms-work.dshai.reggilion.com">← Part 1</a></div>
+<header class="hero">
+  <canvas id="hero-art"></canvas>
+  <div class="inner">
+    <div class="kick">part 2 of 2 · illustrated</div>
     <h1>The same machine, <em>re-plumbed</em></h1>
-    <p class="lede">A standard LLM and DeepSeek V4.1-Flash predict the next token in exactly the same way.
-      Everything in Part 1 still applies. What changes is where the key/value state comes from, how much
-      of it is kept, and how many layers have to run to produce it.</p>
-    <div class="thesis">
-      <p><b>One sentence:</b> a standard transformer gives every layer its own KV cache, computes all
-      layers on every token, and stores that cache at 8–16 bits. V4.1 gives <i>shared</i> KV to most
-      layers, computes only <i>half</i> the layers during prefill, and stores the cache at 4 bits —
-      cutting per-token global KV to <b>890 bytes</b> and decode FLOPs to nearly flat across context.</p>
-    </div>
+    <p class="sub">A standard LLM and DeepSeek V4.1-Flash predict the next token in exactly the same way. What changes is where the key/value state comes from, how much of it is kept, and how many layers have to run.</p>
+    <div class="idea"><p><b>One sentence:</b> a standard transformer gives every layer its own KV cache, computes all layers on every token, and stores that cache at 8–16 bits. V4.1 gives most layers <i>shared</i> KV, computes only half the depth at prefill, and stores the cache at 4 bits.</p></div>
   </div>
+  <div class="scrollhint">scroll<span></span></div>
+</header>
+<section class="plate" id="v1">
+  <div class="art h2-art"><canvas id="v1-art"></canvas></div>
+  <div class="cap">
+    <span class="n">01 · the baseline</span>
+    <h2>Every layer keeps its own state</h2>
+    <p class="one">each layer: own Q, own K, own V, full attention over all earlier tokens</p>
+<p>This is the design Part 1 described, and what most models still ship. Three properties define it — and all three are what V4.1 attacks. Per-layer KV caches, dense attention that grows with the square of context, and every layer running on every token.</p>
+  </div>
+  <div class="tail"></div>
 </section>
 
-<section id="baseline">
-  <div class="wrap">
-    <div class="eyebrow">01 · The baseline</div>
-    <h2>What a standard transformer actually does</h2>
-    <p class="one-line">Every layer: own Q, own K, own V, full attention over all earlier tokens.</p>
-    <p>This is the design from <a href="https://how-llms-work.dshai.reggilion.com">Part 1</a>, and it is
-      what most models still ship. Three properties define it, and all three are the thing V4.1 attacks.</p>
-    <div class="grid g3">
-      <div class="card std"><div class="pill std">property 1</div>
-        <h3>Per-layer KV</h3>
-        <p class="small">Layer <span class="mono">l</span> computes its keys and values from its
-        <i>own</i> hidden state <span class="mono">H<sub>l</sub></span>. Sixty layers means sixty
-        distinct KV caches. Nothing is shared.</p></div>
-      <div class="card std"><div class="pill std">property 2</div>
-        <h3>Full attention</h3>
-        <p class="small">Each query is scored against every causally visible key. Work grows as
-        <b>O(n²)</b> in context. At 1M tokens, the attention matrix alone is a trillion entries.</p></div>
-      <div class="card std"><div class="pill std">property 3</div>
-        <h3>All layers, every token</h3>
-        <p class="small">Prefill and decode both run the full depth. Cost is <b>O(n·L)</b> for the prompt
-        and <b>O(L)</b> per generated token — plus a full cache read every step.</p></div>
-    </div>
-    <div class="callout">
-      <p><b>How bad is it at scale?</b> DeepSeek's own V4 paper quantifies it against its predecessor:
-      at a one-million-token context, DeepSeek-V3.2's cost profile is the reference point that V4 was
-      built to beat — and V4.1 was built to beat V4. Those numbers appear in
-      <a href="#kvmath">section 8</a>.</p>
-    </div>
+<section class="plate" id="v2">
+  <div class="art h2-art"><canvas id="v2-art"></canvas></div>
+  <div class="cap">
+    <span class="n">02 · the headline change</span>
+    <h2>Global KV is projected, not computed</h2>
+    <p class="one">C<sub>l</sub> = H<sub>L/2</sub> · W<sub>l</sub><sup>KV</sup>   for every layer above the midpoint</p>
+<p>The bottom half of the stack is a causal encoder. Above it, decoder layers no longer derive keys and values from their own hidden states — they project them from the encoder's final state. Prefill runs roughly half the depth.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="whatchanged">
-  <div class="wrap">
-    <div class="eyebrow">02 · The change list</div>
-    <h2>Eight edits, in order of impact</h2>
-    <p class="one-line">Each one targets a specific line of the cost model — nothing is changed for its own sake.</p>
-    <div class="grid g2">
-      <div class="card ds"><div class="pill ds">1 · CED</div>
-        <h3>Causal Encoder–Decoder</h3>
-        <p class="small"><b>Targets prefill compute.</b> Bottom half of the stack is an encoder; the
-        decoder's global KV is <i>projected</i> from the encoder's final hidden state instead of being
-        computed per layer. Prefill runs half the depth.</p></div>
-      <div class="card ds"><div class="pill ds">2 · CSA2</div>
-        <h3>Cross-layer KV & index reuse</h3>
-        <p class="small"><b>Targets cache storage.</b> Layers share one copy of the main KV and indexer
-        keys, and reuse each other's top-K selections. Compresses along sequence, heads, <i>and</i>
-        layers at once.</p></div>
-      <div class="card ds"><div class="pill ds">3 · FP4</div>
-        <h3>4-bit main KV cache</h3>
-        <p class="small"><b>Targets bytes per entry.</b> MXFP4 with a per-16-channel scale, quantized
-        after RoPE. Nearly halves cache size versus V4's FP8. SWA cache stays FP8 for accuracy.</p></div>
-      <div class="card ds"><div class="pill ds">4 · SWA Replay</div>
-        <h3>Bounded replay</h3>
-        <p class="small"><b>Targets persistent storage.</b> Replays only the last window of tokens
-        instead of L×window, so SWA cache never has to be persisted to SSD. Persistent footprint drops
-        to ⅛.</p></div>
-      <div class="card ds"><div class="pill ds">5 · mHC</div>
-        <h3>Single-Pass hyper-connections</h3>
-        <p class="small"><b>Targets the residual stream.</b> Widens it into parallel lanes for a
-        complementary scaling axis, then fuses the update into one kernel that halves activation
-        memory traffic.</p></div>
-      <div class="card ds"><div class="pill ds">6 · Engram</div>
-        <h3>Conditional memory</h3>
-        <p class="small"><b>Targets capability per FLOP.</b> 196B parameters of hash-indexed n-gram
-        memory, addressed cheaply and prefetched from host memory — knowledge that does not need a
-        matrix multiply to retrieve.</p></div>
-      <div class="card ds"><div class="pill ds">7 · DSpark</div>
-        <h3>Speculative decoding</h3>
-        <p class="small"><b>Targets decode latency.</b> Drafts five tokens in one pass with a tiny
-        model, predicts acceptance probability, and verifies as many as the current load justifies.</p></div>
-      <div class="card ds"><div class="pill ds">8 · Vision</div>
-        <h3>Native multimodal</h3>
-        <p class="small"><b>Targets workload shape.</b> A DeepSeek-ViT encoder with 3×3 pixel-unshuffle
-        cuts visual tokens 9×, and images flow through the same backbone as text.</p></div>
-    </div>
-    <div class="callout key">
-      <p><b>Read the targets down the list:</b> prefill compute, cache storage, bytes per entry,
-      persistent storage, residual width, knowledge density, decode latency, modality. Eight distinct
-      bottlenecks, eight separate fixes. This is why the model is not "a tweak" — it is a re-derivation
-      of the stack around a cost model.</p>
-    </div>
+<section class="plate" id="v3">
+  <div class="art h2-art"><canvas id="v3-art"></canvas></div>
+  <div class="cap">
+    <span class="n">03 · prefill</span>
+    <h2>Watch half the work disappear</h2>
+    <p class="one">the encoder half runs on the full sequence; the decoder's global branch does not</p>
+<p>Both tracks process the same prompt. The standard stack runs every layer over the whole sequence. CED runs only the encoder half at full cost, then resolves the decoder's global KV by projection — one matrix multiply instead of a full attention pass.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="stack">
-  <div class="wrap">
-    <div class="eyebrow">03 · Side by side</div>
-    <h2>The two stacks, drawn</h2>
-    <p class="one-line">Left: every layer owns its state. Right: state is generated once and projected down.</p>
-    <div class="vs">
-      <div>
-        <div class="card std">
-          <div class="pill std">STANDARD TRANSFORMER</div>
-          <div class="stack" id="stackStd"></div>
-        </div>
-      </div>
-      <div class="mid">VS</div>
-      <div>
-        <div class="card ds">
-          <div class="pill ds">DEEPSEEK V4.1-FLASH · CED</div>
-          <div class="stack" id="stackDs"></div>
-        </div>
-      </div>
-    </div>
-    <div class="grid g2" style="margin-top:22px">
-      <div class="card"><h4 style="margin-top:0">What the left stack stores</h4>
-        <p class="small">N layers × their own K and V. At long context this is the single largest memory
-        consumer, and every one of those bytes must be read from HBM on every decode step.</p></div>
-      <div class="card"><h4 style="margin-top:0">What the right stack stores</h4>
-        <p class="small">A small number of KV "generators" near the bottom. Layers above reuse those
-        entries rather than producing new ones. Storage falls by roughly the reuse factor, and each layer
-        still keeps its own query and its own local sliding-window state.</p></div>
-    </div>
+<section class="plate" id="v4">
+  <div class="art h2-art"><canvas id="v4-art"></canvas></div>
+  <div class="cap">
+    <span class="n">04 · cache sharing</span>
+    <h2>Three modes, one shared cache</h2>
+    <p class="one">Full computes it · Reindex reuses it and re-selects · Reuse takes both</p>
+<p>Compressed Sparse Attention 2 stacks compression along three independent axes: entry size, sequence length, and layers. Each layer is statically assigned one of three modes. Sharing the cache and reusing the selection are separate decisions — that decoupling is the trick.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="ced">
-  <div class="wrap">
-    <div class="eyebrow">04 · The headline change</div>
-    <h2>CED: an encoder half and a decoder half</h2>
-    <p class="one-line">Global KV is projected from the middle of the network, not computed at the top.</p>
-    <p>V4.1 splits the transformer into two zones. The bottom <span class="mono">L/2</span> layers are
-      the <b>causal encoder</b> and behave normally. For every layer above that boundary — the
-      <b>decoder</b> — the key/value entries are not derived from that layer's own hidden state. They are
-      projected directly from the encoder's final hidden state using a per-layer weight matrix.</p>
-    <div class="callout ds">
-      <p class="mono" style="margin:0;font-size:13.5px;line-height:2">
-        Standard:&nbsp;&nbsp; C<sub>l</sub> = H<sub>l</sub> · W<sub>l</sub><sup>KV</sup> &nbsp;&nbsp;&nbsp;(layer l builds its own)<br>
-        CED:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; C<sub>l</sub> = H<sub>L/2</sub> · W<sub>l</sub><sup>KV</sup> &nbsp;&nbsp;&nbsp;for all l > L/2 &nbsp;&nbsp;(the midpoint builds for everyone)
-      </p>
-    </div>
-    <div class="grid g3" style="margin-top:20px">
-      <div class="card"><div class="pill ds">result 1</div>
-        <h3>Half the prefill depth</h3>
-        <p class="small">The decoder's global KV can be produced without running the decoder's attention
-        over the full sequence. Prefill complexity falls from
-        <span class="mono">O(N·L)</span> to <span class="mono">O(N·L/2)</span> — effectively halving it.</p></div>
-      <div class="card"><div class="pill ds">result 2</div>
-        <h3>Asymmetric activation</h3>
-        <p class="small">The model activates <b>8B parameters during prefill</b> but <b>16B during
-        decode</b>. Read-heavy agent workloads — which resend long contexts constantly — pay the smaller
-        number on the part that dominates their bill.</p></div>
-      <div class="card"><div class="pill ds">result 3</div>
-        <h3>Local attention stays deep</h3>
-        <p class="small">CED only shares the <i>global</i> branch. Sliding-window attention is still
-        computed per layer from each layer's own hidden state, preserving local computational depth —
-        the part that carries fine-grained syntax.</p></div>
-    </div>
-    <div class="callout warn">
-      <p><b>The catch, stated plainly.</b> Sharing global KV across layers means those layers no longer
-      each have their own view of the sequence. CED compensates by keeping the per-layer local (SWA)
-      path intact, and by giving the encoder half full computational depth. The published result is
-      "comparable performance to the baseline" while roughly halving prefill — a trade, not a free
-      lunch.</p>
-    </div>
+<section class="plate" id="v5">
+  <div class="art h3-art"><canvas id="v5-art"></canvas></div>
+  <div class="cap">
+    <span class="n">05 · finding the needles</span>
+    <h2>The first layer scans; later layers search a pool</h2>
+    <p class="one">per-query indexer cost goes from linear in context to constant</p>
+<p>Sparse attention only reads a few entries per query, but something has to pick them — and that picker is itself linear in context. The Hierarchical Sparse Indexer restricts deeper layers to a candidate pool the first Full-mode layer already built. The first pass still scans everything.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="cedplay">
-  <div class="wrap">
-    <div class="eyebrow">05 · CED in motion</div>
-    <h2>Watch prefill stop halfway</h2>
-    <p class="one-line">Step through the forward pass and watch which layers actually run.</p>
-    <div class="grid g2" style="align-items:start">
-      <div class="card">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-          <button class="btn" id="cedPlay">▶ Run prefill</button>
-          <button class="btn ghost sm" id="cedReset">Reset</button>
-        </div>
-        <div class="flow" id="cedFlow"></div>
-        <div class="small muted" id="cedStep" style="margin-top:12px">Press Run to trace the pass.</div>
-        <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div><div class="small muted">layers run over the full prompt</div><div class="big ds" id="cedLayers">0</div></div>
-          <div><div class="small muted">relative prefill work</div><div class="big ds" id="cedWork">100%</div></div>
-        </div>
-      </div>
-      <div>
-        <div class="card" style="margin-bottom:14px">
-          <h4 style="margin-top:0">Why half is possible</h4>
-          <p class="small">Because the decoder's global KV is a <i>projection</i> of a hidden state that
-          already exists, producing it costs one matrix multiply — not a full attention pass over the
-          sequence. The expensive part of a layer is skipped, not the layer itself.</p>
-        </div>
-        <div class="card">
-          <h4 style="margin-top:0">What still runs at full depth</h4>
-          <p class="small">Sliding-window attention, in every layer. It is local, so its cost does not
-          grow with total context — but it does depend on each layer's own hidden state, which is why the
-          decoder must still be evaluated to produce it. V4.1 handles that with
-          <a href="#swa">bounded replay</a> rather than by caching it.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="csa2">
-  <div class="wrap">
-    <div class="eyebrow">06 · Cache compression</div>
-    <h2>CSA2: three modes, one shared cache</h2>
-    <p class="one-line">Some layers compute the KV. Most layers borrow it. A few also borrow the selection.</p>
-    <p>Compressed Sparse Attention 2 stacks compression along three independent axes — the size of each
-      entry, the number of entries along the sequence, and the number of layers holding their own copy.
-      Each CSA2 layer is statically assigned one of three modes.</p>
-    <div class="modes" id="csaModes"></div>
-    <div class="grid g2" style="align-items:start;margin-top:6px">
-      <div>
-        <div class="flow" id="csaFlow"></div>
-      </div>
-      <div class="card">
-        <h4 style="margin-top:0" id="csaTitle">Full Mode</h4>
-        <p class="small" id="csaDesc"></p>
-        <div class="kvrow"><div class="k">computes</div><div class="v small" id="csaComputes"></div></div>
-        <div class="kvrow"><div class="k">reuses</div><div class="v small" id="csaReuses"></div></div>
-        <div class="kvrow"><div class="k">cost</div><div class="v small" id="csaCost"></div></div>
-      </div>
-    </div>
-    <div class="callout key">
-      <p><b>The decoupling is the trick.</b> Sharing the cache and reusing the selection are separate
-      decisions. That lets most layers skip the storage cost of KV <i>and</i> most layers skip the
-      compute cost of indexing, while still allowing the selection to change as you go deeper — which a
-      single global routing choice would not permit.</p>
-    </div>
-    <h3>What compression along each axis looks like</h3>
-    <div class="grid g3">
-      <div class="card"><div class="pill">sequence axis</div>
-        <p class="small" style="margin-top:10px">Every <span class="mono">m</span> token positions are
-        merged into one compressed entry, weighted by learned compression scores. Sequence length
-        divides by <span class="mono">m</span>.</p></div>
-      <div class="card"><div class="pill">head axis</div>
-        <p class="small" style="margin-top:10px">Multi-query attention shares one key/value across all
-        query heads, so the cache scales with query heads only for the queries — not the KV.</p></div>
-      <div class="card"><div class="pill">layer axis</div>
-        <p class="small" style="margin-top:10px">Layers reuse a preceding layer's KV and indexer keys.
-        The number of distinct caches in the stack drops to roughly the number of Full-mode layers.</p></div>
-    </div>
-  </div>
-</section>
-
-<section id="indexer">
-  <div class="wrap">
-    <div class="eyebrow">07 · Finding the needles</div>
-    <h2>The indexer decides what a layer reads</h2>
-    <p class="one-line">Before sparse attention can be cheap, something has to pick the top-K entries — and that picker is itself O(n).</p>
-    <p>Sparse attention only reads a few compressed entries per query. A small <b>lightning indexer</b>
-      scores every candidate and selects the top-K. But scoring every candidate is linear in context —
-      at a million tokens, that scan becomes the new bottleneck.</p>
-    <p>V4.1's <b>Hierarchical Sparse Indexer</b> restricts the search domain for deeper layers using work
-      the first layer already did, with no extra state.</p>
-    <div class="grid g2" style="align-items:start">
-      <div class="card">
-        <h4 style="margin-top:0">The hierarchy</h4>
-        <div class="flow" id="idxFlow"></div>
-      </div>
-      <div class="card">
-        <h4 style="margin-top:0">The numbers from the report</h4>
-        <div class="kvrow"><div class="k">block selection</div><div class="v small">Each block takes the maximum index score of its positions; the highest-scoring blocks are kept.</div></div>
-        <div class="kvrow"><div class="k">example pool</div><div class="v small">2,048 blocks × 8 positions = <b>16,384</b> candidate positions.</div></div>
-        <div class="kvrow"><div class="k">final selection</div><div class="v small">Each reindexing layer picks its own <b>top-512</b> from within that pool.</div></div>
-        <div class="kvrow"><div class="k">effect</div><div class="v small">For a fixed pool size, per-query indexer cost goes from <b>linear in context length to constant</b> for every layer after the first.</div></div>
-      </div>
-    </div>
-    <div class="callout warn">
-      <p><b>Honest scope.</b> The first Full-mode layer still scans the entire causally visible range.
-      Hierarchical indexing makes <i>later</i> evaluations constant-cost; it does not remove the initial
-      full-range pass. And it is decoder-only, and introduced during post-training — the candidate
-      restriction is applied identically in training and inference so the indexers are optimized under
-      the domain they will actually see.</p>
-    </div>
-  </div>
-</section>
-
-<section id="kvmath">
-  <div class="wrap">
-    <div class="eyebrow">08 · Cache arithmetic</div>
+<section class="plate" id="v6">
+  <div class="art h2-art"><canvas id="v6-art"></canvas></div>
+  <div class="cap">
+    <span class="n">06 · cache arithmetic</span>
     <h2>Where 890 bytes per token comes from</h2>
-    <p class="one-line">Three multiplicative reductions, applied on top of each other.</p>
-    <div class="grid g3">
-      <div class="card"><div class="pill ds">× layer reuse</div>
-        <p class="small" style="margin-top:10px">Layers stop each keeping their own global KV and
-        indexer keys. Only the Full-mode layers produce them.</p></div>
-      <div class="card"><div class="pill ds">× sequence compression</div>
-        <p class="small" style="margin-top:10px">Every <span class="mono">m</span> positions collapse
-        into one compressed entry, so there are fewer entries to store at all.</p></div>
-      <div class="card"><div class="pill ds">× FP4 precision</div>
-        <p class="small" style="margin-top:10px">Each entry is stored at roughly four bits instead of
-        eight, nearly halving bytes per entry.</p></div>
-    </div>
-    <div class="card" style="margin-top:20px">
-      <h4 style="margin-top:0">Global KV per token — the published comparison</h4>
-      <p class="small muted" style="margin-bottom:14px">The report states V4.1-Flash's global KV cache
-        (always resident in HBM) is <b>890 bytes per token</b>, roughly <b>¼</b> of DeepSeek-V4-Flash at
-        the same sequence length, and that its persistent footprint (SSD or host memory) falls to roughly
-        <b>⅛</b>. It also reports a <b>~437×</b> reduction in per-token global KV relative to
-        DeepSeek-V1.</p>
-      <div class="bars">
-        <div class="brow std"><span class="nm">DeepSeek-V1</span><span class="track"><span class="bar2" style="width:100%"></span></span><span class="pc">437×</span></div>
-        <div class="brow std"><span class="nm">DeepSeek-V4-Flash</span><span class="track"><span class="bar2" style="width:6.9%"></span></span><span class="pc">4×</span></div>
-        <div class="brow ds win"><span class="nm">DeepSeek-V4.1-Flash</span><span class="track"><span class="bar2" style="width:1.7%"></span></span><span class="pc">1×</span></div>
-      </div>
-      <p class="small muted" style="margin:10px 0 0">Bar width is drawn to scale on the V1 baseline; the
-        labels are the reduction factors stated in the paper. Read it as: V4.1 stores roughly one
-        four-hundredth of what V1 stored per token.</p>
-    </div>
-    <div class="callout">
-      <p><b>Why this beats shrinking the model.</b> Parameter count affects compute. Cache size affects
-      whether you can serve the request <i>at all</i>, and how many concurrent requests fit on one GPU.
-      At long context the cache, not the weights, is what runs out first — which is why V4.1 is
-      <i>larger</i> than V4-Flash (552B backbone vs 284B) yet cheaper to run at length.</p>
-    </div>
+    <p class="one">three multiplicative reductions, applied on top of each other</p>
+<p>The report states V4.1-Flash's global KV cache is 890 bytes per token — roughly a quarter of V4-Flash, and about 1/437 of V1. Cross-layer reuse, sequence compression, and FP4 precision each multiply the previous one.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="fp4">
-  <div class="wrap">
-    <div class="eyebrow">09 · Precision</div>
+<section class="plate" id="v7">
+  <div class="art h3-art"><canvas id="v7-art"></canvas></div>
+  <div class="cap">
+    <span class="n">07 · precision</span>
     <h2>Four bits, carefully placed</h2>
-    <p class="one-line">Quantize after RoPE, dequantize before attention, and keep the local cache at FP8.</p>
-    <div class="grid g2" style="align-items:start">
-      <div class="card">
-        <h4 style="margin-top:0">The chosen format</h4>
-        <div class="kvrow"><div class="k">format</div><div class="v small">MXFP4 — the OCP standard, chosen for hardware portability.</div></div>
-        <div class="kvrow"><div class="k">layout</div><div class="v small">E2M1 values with one E4M3 scale per 16 channels (NVFP4-style), minus the second-level global scale.</div></div>
-        <div class="kvrow"><div class="k">why no global scale</div><div class="v small">After RMSNorm the KV latent's norm is bounded near √512 ≈ 22.6, and observed maxima sit around 10 — far below the format's ~2688 range. Omitting the scale costs no measurable accuracy and simplifies the layout.</div></div>
-        <div class="kvrow"><div class="k">quantize after RoPE</div><div class="v small">Quantizing before RoPE helps only marginally and adds decode overhead, so the cache is quantized after rotation.</div></div>
-        <div class="kvrow"><div class="k">SWA cache stays FP8</div><div class="v small">The sliding-window cache is more sensitive to quantization and is kept at higher precision.</div></div>
-      </div>
-      <div>
-        <div class="card ds">
-          <h4 style="margin-top:0">Why storage-only quantization works</h4>
-          <p class="small">The cache is <b>dequantized before attention runs</b>. That means the format
-          never has to be supported by a matrix-multiply unit — it only has to survive a round trip
-          through memory. This is what lets V4.1 use a more accurate four-bit layout than the hardware's
-          native FP4 path would allow, and stay portable across accelerators.</p>
-        </div>
-        <div class="card" style="margin-top:14px">
-          <h4 style="margin-top:0">Two separate wins</h4>
-          <p class="small"><b>FP4 indexer Q/K</b> (already present in V4) accelerates the index
-          computation itself. <b>FP4 main KV</b> (new in V4.1) reduces storage, not math. Different
-          mechanisms, different bottlenecks.</p>
-        </div>
-      </div>
-    </div>
+    <p class="one">quantize after RoPE · dequantize before attention · keep the local cache at FP8</p>
+<p>Because the cache is dequantized before attention runs, the format never has to be supported by a matrix-multiply unit — it only has to survive a round trip through memory. That is what lets V4.1 use a more accurate four-bit layout than native hardware FP4 would allow.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="swa">
-  <div class="wrap">
-    <div class="eyebrow">10 · Deployment</div>
-    <h2>SWA Bounded Replay: replay a window, not a stack</h2>
-    <p class="one-line">Instead of persisting the local cache, recompute a little of it — and accept an approximation.</p>
-    <p>Sliding-window attention in every layer means the local cache depends on every layer's own
-      hidden state. Reconstructing it exactly would require replaying <span class="mono">L × n<sub>win</sub></span>
-      tokens — one window per layer. V4.1 instead replays only the most recent
-      <span class="mono">n<sub>win</sub></span> tokens and truncates SWA to that segment.</p>
-    <div class="grid g2" style="align-items:start">
-      <div class="card std">
-        <div class="pill std">EXACT RECONSTRUCTION</div>
-        <div class="mono small" style="margin-top:12px;line-height:2">
-          replay tokens&nbsp;=&nbsp;L × n<sub>win</sub><br>
-          <span class="muted">e.g. 60 × 4,096 = 245,760 tokens</span>
-        </div>
-        <p class="small" style="margin-top:12px">Mathematically identical to a full forward pass, but the
-        SWA cache must be persisted to SSD to avoid paying this cost — and SSD capacity and bandwidth
-        become the binding constraint.</p>
-      </div>
-      <div class="card ds">
-        <div class="pill ds">SWA BOUNDED REPLAY</div>
-        <div class="mono small" style="margin-top:12px;line-height:2">
-          replay tokens&nbsp;=&nbsp;n<sub>win</sub><br>
-          <span class="muted">e.g. 4,096 tokens</span>
-        </div>
-        <p class="small" style="margin-top:12px">No SWA cache persisted at all. A query at position
-        <span class="mono">i</span> attends to keys in
-        <span class="mono">[max(s, i−W+1), i]</span> for replay start <span class="mono">s</span>. States
-        are approximate, so results depend on where the cache hit landed.</p>
-      </div>
-    </div>
-    <div class="callout warn">
-      <p><b>The approximation is real and disclosed.</b> The reconstructed state is not mathematically
-      equivalent to a full pass, and by design the global KV computed for the uncached suffix depends on
-      the cache-hit position. The report's claim is empirical: the impact on response quality is
-      negligible. They also simulate the same replay during post-training so the model adapts to it —
-      train-aware, not a post-hoc hack.</p>
-    </div>
-    <div class="card">
-      <h4 style="margin-top:0">Two flavours</h4>
-      <div class="kvrow"><div class="k">Encoder SWA Replay</div><div class="v small">Makes prefix caching depend only on global KV, so SWA KV can be removed from the persistent cache entirely.</div></div>
-      <div class="kvrow"><div class="k">Decoder SWA Replay</div><div class="v small">Bounds the decoder forward pass to <span class="mono">n<sub>win</sub></span> tokens, nearly halving total prefill computation.</div></div>
-    </div>
+<section class="plate" id="v8">
+  <div class="art h2-art"><canvas id="v8-art"></canvas></div>
+  <div class="cap">
+    <span class="n">08 · deployment</span>
+    <h2>Replay a window, not a stack</h2>
+    <p class="one">exact reconstruction needs L × n<sub>win</sub> tokens; bounded replay needs n<sub>win</sub></p>
+<p>Instead of persisting the local sliding-window cache to SSD, V4.1 replays only the most recent window and accepts an approximation. The report's claim is empirical — negligible quality impact — and the same replay is simulated during post-training so the model adapts to it.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="mhc">
-  <div class="wrap">
-    <div class="eyebrow">11 · The residual stream</div>
+<section class="plate" id="v9">
+  <div class="art h3-art"><canvas id="v9-art"></canvas></div>
+  <div class="cap">
+    <span class="n">09 · the residual stream</span>
     <h2>Widening the highway, then fusing it</h2>
-    <p class="one-line">From one residual lane to several, updated in a single kernel.</p>
-    <p>Recall from <a href="https://how-llms-work.dshai.reggilion.com/#residual">Part 1</a> that the
-      residual stream is a single wide vector that every block adds into. DeepSeek V4 introduced
-      <b>hyper-connections (mHC)</b>: instead of one stream, keep <span class="mono">n</span> parallel
-      streams and let learned mappings decide how they mix around each block. The constraint ("manifold-
-      constrained") exists to keep signal propagation stable across depth.</p>
-    <div class="vs" style="margin-top:18px">
-      <div class="card std"><div class="pill std">STANDARD RESIDUAL</div>
-        <div class="mono small" style="margin-top:14px;line-height:2">
-          x<sub>l+1</sub> = x<sub>l</sub> + F<sub>l</sub>(x<sub>l</sub>)
-        </div>
-        <p class="small" style="margin-top:12px">One lane. Each block reads it, computes, and adds back.
-        Simple, stable, and the only scaling axis it offers is width and depth.</p></div>
-      <div class="mid">VS</div>
-      <div class="card ds"><div class="pill ds">HYPER-CONNECTIONS</div>
-        <div class="mono small" style="margin-top:14px;line-height:2">
-          X<sub>l+1</sub> = B<sub>l</sub>X<sub>l</sub> + C<sub>l</sub>F<sub>l</sub>(A<sub>l</sub>X<sub>l</sub>)<br>
-          <span class="muted">(A<sub>l</sub>,B<sub>l</sub>,C<sub>l</sub>) = H(X<sub>l</sub>)</span>
-        </div>
-        <p class="small" style="margin-top:12px">Several lanes, with learned input, residual, and output
-        mappings. The inner layer still sees a normal-width vector, so depth costs nothing extra — this
-        is a <i>complementary</i> scaling axis.</p></div>
-    </div>
-    <div class="callout ds">
-      <p><b>V4.1's contribution: Single-Pass mHC.</b> The original mHC needs four kernels to execute the
-      update. V4.1's single-pass version plus its <b>Mega-mHC</b> deployment kernel <b>halves activation
-      memory traffic</b>. Nothing about the math changed — this is a pure systems win, and it is a good
-      example of how much of frontier inference cost lives in kernel fusion rather than architecture.</p>
-    </div>
+    <p class="one">X<sub>l+1</sub> = B<sub>l</sub>X<sub>l</sub> + C<sub>l</sub>F<sub>l</sub>(A<sub>l</sub>X<sub>l</sub>)</p>
+<p>Hyper-connections replace the single residual lane with several, letting learned mappings decide how they mix around each block. V4.1's Single-Pass mHC plus its Mega-mHC kernel halves activation memory traffic — a pure systems win, with the math unchanged.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="engram">
-  <div class="wrap">
-    <div class="eyebrow">12 · Memory that isn't math</div>
-    <h2>Engram: 196B parameters you don't multiply</h2>
-    <p class="one-line">Look up n-gram knowledge by hash instead of recalling it through a matrix multiply.</p>
-    <p>Storing facts in MLP weights is expensive: every retrieval costs a full-width matrix multiply at
-      every layer. <b>Engram</b> is a conditional memory module that decouples memorization from
-      computation — knowledge lives in hash-indexed embedding tables that are <i>addressed</i>, not
-      computed over.</p>
-    <div class="grid g2" style="align-items:start">
-      <div class="card ds">
-        <h4 style="margin-top:0">The configuration, as published</h4>
-        <div class="kvrow"><div class="k">parameters</div><div class="v small"><b>196B</b>, split evenly across two modules</div></div>
-        <div class="kvrow"><div class="k">n-gram orders</div><div class="v small">{2, 3, 4} per module</div></div>
-        <div class="kvrow"><div class="k">hash heads</div><div class="v small">8 per module</div></div>
-        <div class="kvrow"><div class="k">embedding dim</div><div class="v small">2048 per order</div></div>
-        <div class="kvrow"><div class="k">table size</div><div class="v small">~16M entries per head, sizes chosen as distinct primes to reduce collisions</div></div>
-        <div class="kvrow"><div class="k">precision</div><div class="v small">FP8 for embedding tables and key/value projections</div></div>
-        <div class="kvrow"><div class="k">placement</div><div class="v small">Layers <b>1 and 14</b> (zero-indexed) — chosen to balance memory across pipeline stages</div></div>
-      </div>
-      <div>
-        <div class="card">
-          <h4 style="margin-top:0">Why "conditional"</h4>
-          <p class="small">Context-aware gating decides how much the retrieved memory contributes at each
-          position. It is not a static lookup bolted on — the module reads context to modulate its own
-          output.</p>
-        </div>
-        <div class="card" style="margin-top:14px">
-          <h4 style="margin-top:0">The serving trick</h4>
-          <p class="small">Because addressing is <b>deterministic</b> — same n-gram, same slot — the
-          embeddings can be prefetched from host memory by background RDMA transfers. Prefetching for the
-          first module overlaps with computation in the first transformer block, so the lookup is
-          largely hidden behind work that was happening anyway.</p>
-          <p class="small" style="margin-bottom:0">That is a genuinely different lever: 196B parameters
-          that cost bandwidth but almost no FLOPs.</p>
-        </div>
-        <div class="card" style="margin-top:14px">
-          <h4 style="margin-top:0">Two changes from the original Engram</h4>
-          <p class="small" style="margin-bottom:0">The short causal convolution was dropped (gains did
-          not justify inference-stack complexity), and embedding updates use momentum followed by
-          Sinkhorn balancing instead of Adam — which avoids a large optimizer-state footprint.</p>
-        </div>
-      </div>
-    </div>
+<section class="plate" id="v10">
+  <div class="art h2-art"><canvas id="v10-art"></canvas></div>
+  <div class="cap">
+    <span class="n">10 · memory that isn't math</span>
+    <h2>196B parameters you never multiply</h2>
+    <p class="one">hash-indexed n-gram tables, prefetched from host memory</p>
+<p>Engram decouples memorization from computation. Knowledge lives in hash-addressed embedding tables rather than MLP weights, so retrieval costs bandwidth instead of FLOPs. Two modules at layers 1 and 14, orders {2,3,4}, 8 hash heads, FP8 tables.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="dspark">
-  <div class="wrap">
-    <div class="eyebrow">13 · Decode latency</div>
-    <h2>DSpark: guess five tokens, verify cheaply</h2>
-    <p class="one-line">Speculative decoding, rebuilt with a confidence model and a load-aware scheduler.</p>
-    <p>Decode is sequential: one forward pass per token. Speculative decoding breaks that by having a
-      small draft model propose several tokens, then checking them against the real model in one pass.
-      Every accepted token is a forward pass you did not have to run.</p>
-    <div class="flow" id="dsparkFlow" style="margin-top:18px"></div>
-    <div class="grid g3" style="margin-top:20px">
-      <div class="card"><div class="pill ds">semi-autoregressive</div>
-        <p class="small" style="margin-top:10px">Three transformer blocks with a 128-token sliding
-        window produce base logits for <b>five</b> draft positions in a single forward pass. A
-        lightweight Markov head then models the dependencies between those draft tokens.</p></div>
-      <div class="card"><div class="pill ds">confidence head</div>
-        <p class="small" style="margin-top:10px">Predicts per-position conditional acceptance
-        probabilities, which are combined into prefix survival probabilities — "how far into this draft
-        will we actually get?"</p></div>
-      <div class="card"><div class="pill ds">the scheduler</div>
-        <p class="small" style="margin-top:10px">Combines those estimates with profiled engine
-        throughput curves to pick the verification length per request, maximizing expected system-wide
-        token throughput under current load. Verification depth becomes an economic decision.</p></div>
-    </div>
-    <div class="callout">
-      <p><b>How it differs from V3's MTP.</b> V3's multi-token-prediction module trained jointly with
-      the backbone throughout pretraining. DSpark is introduced in a dedicated stage <i>after</i>
-      pretraining with the backbone frozen, then continues training alongside it during post-training
-      <b>without gradients flowing back into the backbone</b>. That keeps the drafter aligned with a
-      policy that keeps changing — so it accelerates both live serving and the rollout generation used
-      for RL.</p>
-    </div>
+<section class="plate" id="v11">
+  <div class="art h2-art"><canvas id="v11-art"></canvas></div>
+  <div class="cap">
+    <span class="n">11 · decode latency</span>
+    <h2>Guess five tokens, verify cheaply</h2>
+    <p class="one">three draft blocks · a Markov head · a confidence head · a load-aware scheduler</p>
+<p>DSpark drafts five positions in one pass and predicts how far the draft will survive. The scheduler combines that estimate with engine throughput curves to pick a verification length per request — turning verification depth into an economic decision.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="multimodal">
-  <div class="wrap">
-    <div class="eyebrow">14 · Vision</div>
-    <h2>Images enter the same stream as text</h2>
-    <p class="one-line">A purpose-built ViT, a 9× token reduction, and modality-aware expert routing.</p>
-    <div class="pipe" style="margin:16px 0">
-      <div class="step"><div class="n">01</div><div class="t">DeepSeek-ViT</div><div class="d">ViT built from scratch; 2D-RoPE for arbitrary resolution, linear patch projection for Muon compatibility, RMSNorm, SwiGLU</div></div>
-      <div class="arrowx">→</div>
-      <div class="step"><div class="n">02</div><div class="t">3×3 pixel unshuffle</div><div class="d">Rearranges local neighborhoods into channels — cuts visual token count 9×</div></div>
-      <div class="arrowx">→</div>
-      <div class="step"><div class="n">03</div><div class="t">MLP projector</div><div class="d">Maps visual features into the language backbone's hidden dimension</div></div>
-      <div class="arrowx">→</div>
-      <div class="step"><div class="n">04</div><div class="t">Interleave</div><div class="d">Visual embeddings are inserted at the image-token positions, alongside text</div></div>
-    </div>
-    <div class="grid g2" style="align-items:start">
-      <div class="card">
-        <h4 style="margin-top:0">Resolution handling</h4>
-        <p class="small">Absolute positional embeddings are replaced with 2D-RoPE so the encoder handles
-        varying resolutions natively. After the 3×3 unshuffle the model supports inputs up to roughly
-        <b>1344 × 1344</b> pixels without the token count exploding.</p>
-      </div>
-      <div class="card">
-        <h4 style="margin-top:0">Modality-aware load balancing</h4>
-        <p class="small">Image and text tokens have different representation distributions and therefore
-        different expert-routing preferences. Balancing their aggregate load would hide
-        modality-specific imbalance — so V4.1 keeps <b>separate expert-wise correction biases</b> for
-        text and image tokens, updated independently, while retaining the original routing scores for
-        weighting expert outputs.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="decode">
-  <div class="wrap">
-    <div class="eyebrow">15 · The payoff</div>
+<section class="plate" id="v12">
+  <div class="art h2-art"><canvas id="v12-art"></canvas></div>
+  <div class="cap">
+    <span class="n">12 · the payoff</span>
     <h2>Decode cost stops growing with context</h2>
-    <p class="one-line">Extend the context 256× and decode FLOPs rise by about a quarter.</p>
-    <p>This is the single most striking claim in the V4.1 report. Across a 256-fold increase in context —
-      from 4K to 1M tokens — its single-token decode FLOPs increase by only about <b>¼</b>. Earlier
-      generations grow far faster. The chart below is drawn from the report's stated comparison.</p>
-    <div class="card" style="margin-top:18px">
-      <div class="chartbox">
-        <svg viewBox="0 0 720 230" preserveAspectRatio="none" style="width:100%;height:100%">
-          <defs>
-            <linearGradient id="gds" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stop-color="#4d6bfe"/><stop offset="100%" stop-color="#22d3ee"/>
-            </linearGradient>
-          </defs>
-          <line x1="60" y1="190" x2="700" y2="190" stroke="#26344f" stroke-width="1"/>
-          <line x1="60" y1="20" x2="60" y2="190" stroke="#26344f" stroke-width="1"/>
-          <text x="60" y="212" fill="#5c6b8a" font-size="10" font-family="monospace">4K</text>
-          <text x="270" y="212" fill="#5c6b8a" font-size="10" font-family="monospace">32K</text>
-          <text x="470" y="212" fill="#5c6b8a" font-size="10" font-family="monospace">256K</text>
-          <text x="660" y="212" fill="#5c6b8a" font-size="10" font-family="monospace">1M</text>
-          <text x="8" y="30" fill="#5c6b8a" font-size="10" font-family="monospace">high</text>
-          <text x="14" y="185" fill="#5c6b8a" font-size="10" font-family="monospace">low</text>
-          <path d="M60,178 C240,150 420,80 700,26" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4"/>
-          <path d="M60,172 C240,120 420,60 700,34" fill="none" stroke="#64748b" stroke-width="2"/>
-          <path d="M60,168 C260,148 430,120 700,96" fill="none" stroke="url(#gds)" stroke-width="3"/>
-          <circle cx="700" cy="96" r="4" fill="#22d3ee"/>
-          <circle cx="700" cy="34" r="3.5" fill="#64748b"/>
-          <text x="500" y="90" fill="#22d3ee" font-size="11" font-family="monospace">V4.1-Flash  (+25% over 256×)</text>
-          <text x="540" y="30" fill="#94a3b8" font-size="11" font-family="monospace">V4-Flash</text>
-          <text x="600" y="52" fill="#64748b" font-size="11" font-family="monospace">older gen</text>
-        </svg>
-      </div>
-      <p class="small muted" style="margin:0">Schematic of the report's stated trend: V4-Flash's decode
-        FLOPs grow with context; V4.1-Flash's stay nearly constant. FLOP accounting weights BF16, FP8, and
-        FP4 operations at 1, 0.5, and 0.25 respectively.</p>
-    </div>
-    <div class="callout key">
-      <p><b>Why "nearly constant" is the important phrase.</b> If per-token decode cost is flat in
-      context length, then serving a 1M-token agent session costs almost the same per generated token as
-      serving a 4K chat. That changes which products are economically viable — long-horizon agents,
-      whole-repository code work, cross-document analysis — rather than merely making existing ones
-      cheaper.</p>
-    </div>
+    <p class="one">extend context 256× and decode FLOPs rise by about a quarter</p>
+<p>Across a 256-fold increase in context — 4K to 1M tokens — V4.1-Flash's single-token decode FLOPs rise only about 25%. If per-token decode cost is nearly flat in context length, long-horizon agents become economically viable rather than merely cheaper.</p>
   </div>
+  <div class="tail"></div>
 </section>
 
-
-<section id="race">
-  <div class="wrap">
-    <div class="eyebrow">Live · animated</div>
-    <h2>The prefill race</h2>
-    <p class="one-line">Same prompt, same output, different amount of work over the full sequence.</p>
-    <p>Both tracks process the identical prompt. The standard stack must run every layer over the whole
-      sequence. CED runs only the encoder half over the full prompt, then resolves the decoder's global
-      KV by projection.</p>
-    <div class="card" style="padding:18px">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
-        <button class="btn" id="raceGo">▶ Run both</button>
-        <button class="btn ghost sm" id="raceReset">Reset</button>
-      </div>
-
-      <div class="small muted" style="margin-bottom:6px">STANDARD TRANSFORMER — every layer over the full prompt</div>
-      <div class="race" id="raceA"></div>
-      <div class="small" style="margin:8px 0 20px">
-        work units: <span class="mono" id="workA" style="color:var(--stdl)">0</span>
-      </div>
-
-      <div class="small muted" style="margin-bottom:6px">DEEPSEEK V4.1 — CED</div>
-      <div class="race" id="raceB"></div>
-      <div class="small" style="margin-top:8px">
-        work units: <span class="mono" id="workB" style="color:var(--cyan)">0</span>
-      </div>
-
-      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);display:grid;
-                  grid-template-columns:repeat(3,1fr);gap:14px">
-        <div><div class="small muted">layers over full sequence</div><div class="big std" id="layA">0</div></div>
-        <div><div class="small muted">layers over full sequence</div><div class="big ds" id="layB">0</div></div>
-        <div><div class="small muted">saving</div><div class="big ds" id="save">—</div></div>
-      </div>
-    </div>
-    <p class="small muted">Illustrative: a 12-layer stack, drawn to show the mechanism. The published
-      result is a reduction of prefill complexity from O(N·L) to roughly O(N·L/2), with the encoder's
-      sliding-window work bounded by bounded replay rather than by sequence length.</p>
-  </div>
-</section>
-
-<section id="shrink">
-  <div class="wrap">
-    <div class="eyebrow">Live · animated</div>
-    <h2>How the cache gets small</h2>
-    <p class="one-line">Three multiplicative reductions, applied one at a time.</p>
-    <p>Each mechanism multiplies the previous one. That is why the final number is so much smaller than
-      any single technique would suggest.</p>
-    <div class="card" style="padding:18px">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-        <button class="btn" id="shrinkGo">▶ Apply each technique</button>
-        <button class="btn ghost sm" id="shrinkReset">Reset</button>
-      </div>
-      <div class="bars" id="shrinkBars"></div>
-      <div class="small muted" id="shrinkNote" style="margin-top:14px">Press the button to compress step
-        by step. Bar widths are illustrative of the three mechanisms, not a measured byte count.</div>
-    </div>
-    <div class="grid g3" style="margin-top:18px">
-      <div class="card"><div class="pill ds">× cross-layer reuse</div>
-        <p class="small" style="margin-top:10px">Layers stop each keeping their own global KV and indexer
-        keys. Only Full-mode layers produce them.</p></div>
-      <div class="card"><div class="pill ds">× sequence compression</div>
-        <p class="small" style="margin-top:10px">Every <span class="mono">m</span> positions collapse into
-        one compressed entry, so there are fewer entries to store in the first place.</p></div>
-      <div class="card"><div class="pill ds">× FP4 precision</div>
-        <p class="small" style="margin-top:10px">Roughly four bits per value instead of eight — and the
-        cache is dequantized before attention, so no special matmul support is needed.</p></div>
+<section class="plate" id="spec">
+  <div class="cap" style="padding-top:56px;padding-bottom:0">
+    <span class="n">13 · reference</span>
+    <h2>Every difference, one line each</h2>
+    <p class="one">standard transformer vs deepseek v4.1-flash</p>
+    <div class="spectable">
+      <div class="srow sh"><span>dimension</span><span>standard</span><span>v4.1-flash</span></div>
+      <div class="srow"><span>KV origin</span><span>each layer computes its own</span><span class="ds">projected from the encoder midpoint (CED)</span></div>
+      <div class="srow"><span>prefill depth</span><span>all L layers over the prompt</span><span class="ds">effectively L/2 for the global branch</span></div>
+      <div class="srow"><span>activation</span><span>same for prefill and decode</span><span class="ds">8B prefill / 16B decode</span></div>
+      <div class="srow"><span>attention</span><span>dense, O(n²)</span><span class="ds">CSA2 + sliding window in every layer</span></div>
+      <div class="srow"><span>compression axes</span><span>one (head sharing)</span><span class="ds">three jointly: entry, sequence, layer</span></div>
+      <div class="srow"><span>layer modes</span><span>uniform</span><span class="ds">Full / Reindex / Reuse, statically assigned</span></div>
+      <div class="srow"><span>selection</span><span>n/a</span><span class="ds">hierarchical indexer — constant per query after the first</span></div>
+      <div class="srow"><span>KV precision</span><span>FP16 / BF16, sometimes FP8</span><span class="ds">FP4 main KV; FP8 for SWA</span></div>
+      <div class="srow"><span>global KV</span><span>large, grows with layers</span><span class="ds">890 bytes/token — ¼ of V4-Flash</span></div>
+      <div class="srow"><span>persistent KV</span><span>often persisted wholesale</span><span class="ds">~⅛; SWA cache not persisted</span></div>
+      <div class="srow"><span>reconstruction</span><span>exact</span><span class="ds">SWA Bounded Replay — approximate, train-aware</span></div>
+      <div class="srow"><span>residual</span><span>single lane</span><span class="ds">hyper-connections, Single-Pass mHC</span></div>
+      <div class="srow"><span>memory</span><span>knowledge in MLP weights</span><span class="ds">plus Engram: 196B hash-indexed</span></div>
+      <div class="srow"><span>decode</span><span>none, or jointly-trained MTP</span><span class="ds">DSpark — confidence-scheduled verification</span></div>
+      <div class="srow"><span>multimodal</span><span>separate adapter, or none</span><span class="ds">native — DeepSeek-ViT, 9× token reduction</span></div>
+      <div class="srow"><span>scale</span><span>varies</span><span class="ds">552B backbone + 196B Engram · 1M context · 45T tokens</span></div>
     </div>
   </div>
+  <div class="tail"></div>
 </section>
 
-<section id="table">
-  <div class="wrap">
-    <div class="eyebrow">16 · Reference</div>
-    <h2>Every difference, in one table</h2>
-    <table>
-      <tr><th>Dimension</th><th>Standard transformer LLM</th><th>DeepSeek V4.1-Flash</th></tr>
-      <tr><td>KV origin</td><td>Each layer computes its own K/V from its own hidden state</td><td class="ds">Decoder global KV projected from the encoder's final hidden state (CED)</td></tr>
-      <tr><td>Prefill depth</td><td>All L layers run over the full prompt</td><td class="ds">Effectively L/2 for the global branch</td></tr>
-      <tr><td>Prefill complexity</td><td>O(N·L)</td><td class="ds">≈ O(N·L/2 + n<sub>win</sub>·L/2)</td></tr>
-      <tr><td>Activated params</td><td>Same for prefill and decode</td><td class="ds">8B prefill / 16B decode (asymmetric)</td></tr>
-      <tr><td>Attention</td><td>Dense full attention, O(n²)</td><td class="ds">Compressed Sparse Attention 2 (pure CSA2) + sliding-window attention in every layer</td></tr>
-      <tr><td>Attention compression axes</td><td>One (head sharing, if GQA/MLA)</td><td class="ds">Three jointly: entry size, sequence (m:1), and layer (cross-layer reuse)</td></tr>
-      <tr><td>Layer modes</td><td>Uniform</td><td class="ds">Static per layer: Full / Reindex / Reuse</td></tr>
-      <tr><td>Selection cost</td><td>n/a (dense)</td><td class="ds">Hierarchical Sparse Indexer — constant per query after the first layer</td></tr>
-      <tr><td>KV precision</td><td>FP16 / BF16, sometimes FP8</td><td class="ds">FP4 main KV (MXFP4, E2M1 + E4M3 per 16 ch); FP8 for SWA KV</td></tr>
-      <tr><td>Global KV per token</td><td>Large, grows with layers</td><td class="ds">890 bytes — ~¼ of V4-Flash, ~1/437 of V1</td></tr>
-      <tr><td>Persistent KV</td><td>Often persisted wholesale</td><td class="ds">~⅛ of V4-Flash; SWA cache not persisted at all</td></tr>
-      <tr><td>Cache reconstruction</td><td>Exact</td><td class="ds">SWA Bounded Replay — approximate, train-aware</td></tr>
-      <tr><td>Residual stream</td><td>Single lane, x + F(x)</td><td class="ds">Multi-lane hyper-connections, Single-Pass mHC + Mega-mHC kernel (½ activation traffic)</td></tr>
-      <tr><td>Parametric memory</td><td>All knowledge in MLP weights</td><td class="ds">Plus Engram: 196B hash-indexed n-gram memory, RDMA-prefetched</td></tr>
-      <tr><td>Decode acceleration</td><td>None, or MTP trained jointly</td><td class="ds">DSpark — semi-autoregressive drafting, confidence-scheduled verification</td></tr>
-      <tr><td>Multimodal</td><td>Separate adapter, or none</td><td class="ds">Native — DeepSeek-ViT, 3×3 pixel unshuffle, modality-aware MoE balancing</td></tr>
-      <tr><td>Optimizer</td><td>AdamW</td><td class="ds">Head-wise Muon + AdamW; Sinkhorn-balanced updates for Engram/embedding/head</td></tr>
-      <tr><td>Scale</td><td>Varies</td><td class="ds">552B backbone + 196B Engram, 1M context, 45T pretraining tokens</td></tr>
-    </table>
-  </div>
-</section>
-
-<section id="why">
-  <div class="wrap">
-    <div class="eyebrow">17 · Interpretation</div>
-    <h2>What this actually buys — and for whom</h2>
-    <p class="one-line">The architecture is shaped by one workload: long-horizon agents.</p>
-    <p>V4.1's design only makes sense against a specific traffic pattern, and the report says so
-      explicitly: agentic workflows generate extensive prefill requests, and KV cache misses impose
-      severe computational overhead. Read-heavy, tool-calling, prefix-shared, very long contexts. Every
-      one of the eight changes serves that shape.</p>
-    <div class="grid g2">
-      <div class="card"><h4 style="margin-top:0">For the operator</h4>
-        <ul class="tight small">
-          <li>Cache-hit charges dominate agent cost — compressing the cache cuts them directly.</li>
-          <li>Off-peak rates are half of peak, so flexible workloads should be scheduled off-peak.</li>
-          <li>Fewer bytes per session means more concurrent sessions per GPU.</li>
-        </ul></div>
-      <div class="card"><h4 style="margin-top:0">For the user</h4>
-        <ul class="tight small">
-          <li>Longer contexts become routine rather than a special mode.</li>
-          <li>Per-token cost stops scaling with how much history you carry.</li>
-          <li>Native vision means screenshots and documents go in directly.</li>
-        </ul></div>
-    </div>
-    <div class="callout ds">
-      <p><b>The strategic read.</b> V4.1-Flash has <i>more</i> backbone parameters than V4-Flash (552B
-      vs 284B) and outperforms V4-Pro on performance, cost, speed, and total runtime. That combination —
-      bigger model, cheaper to run — is only possible because the bottleneck moved. When storage and
-      bandwidth bind, reducing bytes beats reducing weights.</p>
-    </div>
-  </div>
-</section>
-
-<section id="limits">
-  <div class="wrap">
-    <div class="eyebrow">18 · Caveats</div>
-    <h2>What to be careful about</h2>
-    <div class="grid g2">
-      <div class="card"><h4 style="margin-top:0">Approximations are real</h4>
-        <p class="small">SWA Bounded Replay produces states that are not mathematically equivalent to a
-        full forward pass, and results depend on the cache-hit position. The claim is empirical
-        negligible degradation, not exactness.</p></div>
-      <div class="card"><h4 style="margin-top:0">The first indexer still scans everything</h4>
-        <p class="small">Hierarchical indexing makes later indexers constant-cost. The first Full-mode
-        layer still does a full-range pass, and hierarchical indexing is decoder-only.</p></div>
-      <div class="card"><h4 style="margin-top:0">CED trades depth for prefill</h4>
-        <p class="small">Layers above the boundary no longer each hold their own global view. The design
-        compensates with per-layer local attention and full encoder depth, and reports comparable
-        performance — but it is a trade.</p></div>
-      <div class="card"><h4 style="margin-top:0">Engram costs bandwidth</h4>
-        <p class="small">196B parameters of memory that is prefetched rather than multiplied still have
-        to move. The design hides it behind compute, but it is not free.</p></div>
-      <div class="card"><h4 style="margin-top:0">Model lineup is moving</h4>
-        <p class="small">DeepSeek has stated V4-Pro requests are being routed to V4.1-Flash at V4.1-Flash
-        rates until V4.1-Pro launches, and that it is phasing out V4-Pro. Check current documentation
-        before pinning a model ID.</p></div>
-      <div class="card"><h4 style="margin-top:0">Figures are from the reports</h4>
-        <p class="small">Byte counts, activation counts, and reduction factors on this page are quoted
-        from DeepSeek's own V4 and V4.1-Flash technical reports. They are the authors' measurements, not
-        independent replications.</p></div>
-    </div>
-  </div>
-</section>
-
-<section id="sources">
-  <div class="wrap">
-    <div class="eyebrow">19 · Sources</div>
+<section class="plate" id="src">
+  <div class="cap" style="padding-top:56px;padding-bottom:0">
+    <span class="n">14 · sources</span>
     <h2>Primary documents</h2>
-    <table>
-      <tr><th>Document</th><th>What it establishes</th></tr>
-      <tr><td><a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence</a> (arXiv 2606.19348)</td><td>V4-Pro 1.6T/49B, V4-Flash 284B/13B; CSA + HCA hybrid attention, mHC, Muon; 32T+ tokens; 27% FLOPs and 10% KV vs V3.2 at 1M context</td></tr>
-      <tr><td><a href="https://arxiv.org/abs/2609.19969">DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression</a> (arXiv 2609.19969)</td><td>CED, CSA2 with Full/Reindex/Reuse modes, Hierarchical Sparse Indexer, Single-Pass mHC, Engram, DSpark, FP4 KV, SWA Bounded Replay; 552B backbone + 196B Engram; 890 bytes/token; 45T tokens</td></tr>
-      <tr><td><a href="https://www.deepseek.com/en/news/deepseek-v4-1-flash/">Introducing DeepSeek-V4.1-Flash</a> (DeepSeek, Sept 10 2026)</td><td>Release framing: asymmetric architecture, 552B MoE, 8B/16B activation split, ¼ HBM and ⅛ SSD cache versus previous generation, native multimodal, pricing</td></tr>
-      <tr><td><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">DeepSeek-V4.1-Flash weights and technical report</a> (Hugging Face)</td><td>Model checkpoints and the standalone V4.1 technical report PDF</td></tr>
-      <tr><td><a href="https://huggingface.co/collections/deepseek-ai/deepseek-v4">DeepSeek-V4 collection</a> (Hugging Face)</td><td>V4 series checkpoints</td></tr>
-    </table>
-    <p class="small muted">Part 1 covers the general transformer design these models are built from:
-      <a href="https://how-llms-work.dshai.reggilion.com">How LLMs Work — a visual walkthrough →</a></p>
+    <p class="one">figures on this page come from these reports</p>
+    <ul class="srclist">
+      <li><a href="https://arxiv.org/abs/2609.19969">DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression</a> (arXiv 2609.19969) — CED, CSA2 modes, hierarchical indexer, Single-Pass mHC, Engram, DSpark, FP4 KV, SWA Bounded Replay; 552B backbone + 196B Engram; 890 bytes/token; 45T tokens.</li>
+      <li><a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence</a> (arXiv 2606.19348) — the V4 series, CSA + HCA hybrid attention, mHC, Muon; 27% FLOPs and 10% KV vs V3.2 at 1M context.</li>
+      <li><a href="https://www.deepseek.com/en/news/deepseek-v4-1-flash/">Introducing DeepSeek-V4.1-Flash</a> (DeepSeek, 10 Sept 2026) — release framing, pricing, ¼ HBM and ⅛ SSD cache reduction, native multimodal.</li>
+      <li><a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash">Model weights and standalone technical report</a> (Hugging Face).</li>
+    </ul>
+    <p style="margin-top:18px"><a href="https://how-llms-work.dshai.reggilion.com" style="color:var(--cyan);text-decoration:none;font-weight:600">← Back to Part 1: How LLMs work</a></p>
   </div>
+  <div class="tail"></div>
 </section>
-
-<footer>
-  <div class="wrap">
-    <p><b>Part 2 of 2.</b> Start with <a href="https://how-llms-work.dshai.reggilion.com">How LLMs Work</a>
-      if any term on this page is unfamiliar — tokenization, attention, the causal mask, KV cache, and
-      prefill versus decode are all covered there with the same visual treatment.</p>
-    <p>Architecture details, parameter counts, and reduction factors are quoted from the DeepSeek-AI
-      technical reports linked above. Diagrams are explanatory and are not reproductions of figures from
-      those papers.</p>
-  </div>
+<footer style="padding:40px 24px 70px;text-align:center;color:#556180;font:13px ui-sans-serif,system-ui,sans-serif">
+  <p style="margin:0 0 8px">Part 2 of 2 · architecture details, parameter counts, and reduction factors are quoted from the DeepSeek-AI technical reports linked above.</p>
+  <p style="margin:0"><a href="https://how-llms-work.dshai.reggilion.com" style="color:#8fa2c4">← Back to Part 1: How LLMs work</a></p>
 </footer>
-
-</main>
-<script src="app.js"></script>
 <script src="anim.js"></script>
 </body>
 </html>
