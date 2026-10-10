@@ -472,15 +472,20 @@ A('v9-art', function(c,W,H,t){
     c.quadraticCurveTo(hx-44,(y1+y2)/2,hx-16,y2);
     c.strokeStyle='rgba(77,107,254,.28)'; c.lineWidth=1; c.stroke();
   }
-  bx(c,hx-bw*0.30, cy-totalH/2-34, bw*0.60, 24, 5);
+  // the learned mixing block sits above the lanes and feeds every one of them
+  var mixW=bw*0.62, mixX=hx+(bw-mixW)/2, mixY=cy-totalH/2-40;
+  bx(c,mixX,mixY,mixW,24,5);
   c.fillStyle='rgba(77,107,254,.85)'; c.fill();
+  c.strokeStyle='rgba(124,147,255,.9)'; c.lineWidth=1.2; c.stroke();
   M(c,10.5); c.textAlign='center'; c.fillStyle='rgba(238,243,255,.95)';
-  c.fillText('learned mixing', hx+bw/2-bw*0.30+bw*0.30, cy-totalH/2-18);
-  // draw connection from mixer into lanes
+  c.fillText('learned mixing', mixX+mixW/2, mixY+16);
+  // fan the mixer output into each lane
   for(var q=0;q<LANES;q++){
     var yq=cy-totalH/2+q*(laneH+gap)+laneH/2;
-    c.beginPath(); c.moveTo(hx,yq); c.lineTo(hx,yq);
-    c.stroke();
+    c.beginPath();
+    c.moveTo(mixX+mixW/2, mixY+24);
+    c.lineTo(hx+bw/2, yq);
+    c.strokeStyle='rgba(77,107,254,.30)'; c.lineWidth=1; c.stroke();
   }
   M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
   c.fillText('V4.1 fuses the four-kernel update into Single-Pass mHC, halving activation memory traffic', 24, H-20);
