@@ -141,3 +141,10 @@ footer a{color:var(--muted)}
 .chartbox{position:relative;height:230px;margin:14px 0}
 svg{display:block;max-width:100%}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.race{display:flex;gap:4px;flex-wrap:wrap}
+.race i{flex:1 1 40px;height:34px;border-radius:7px;background:#0a1120;
+  border:1px solid var(--line);transition:background .3s, border-color .3s, transform .3s}
+.race i.on{background:linear-gradient(180deg,#475569,#94a3b8);border-color:#94a3b8}
+.race i.enc{background:linear-gradient(180deg,var(--ds),#2f4a94);border-color:var(--dsl);transform:translateY(-2px)}
+.race i.dec{background:linear-gradient(180deg,#0e3a44,#1f6d7a);border-color:var(--cyan);transform:translateY(-2px)}

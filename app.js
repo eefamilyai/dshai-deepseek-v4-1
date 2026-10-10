@@ -132,6 +132,7 @@
     f.appendChild(all);
   }
   show('Full');
+  window.__csaModes = [...modesEl.children];
 })();
 
 // ---------- indexer flow ----------

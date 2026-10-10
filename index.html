@@ -651,6 +651,76 @@
   </div>
 </section>
 
+
+<section id="race">
+  <div class="wrap">
+    <div class="eyebrow">Live · animated</div>
+    <h2>The prefill race</h2>
+    <p class="one-line">Same prompt, same output, different amount of work over the full sequence.</p>
+    <p>Both tracks process the identical prompt. The standard stack must run every layer over the whole
+      sequence. CED runs only the encoder half over the full prompt, then resolves the decoder's global
+      KV by projection.</p>
+    <div class="card" style="padding:18px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+        <button class="btn" id="raceGo">▶ Run both</button>
+        <button class="btn ghost sm" id="raceReset">Reset</button>
+      </div>
+
+      <div class="small muted" style="margin-bottom:6px">STANDARD TRANSFORMER — every layer over the full prompt</div>
+      <div class="race" id="raceA"></div>
+      <div class="small" style="margin:8px 0 20px">
+        work units: <span class="mono" id="workA" style="color:var(--stdl)">0</span>
+      </div>
+
+      <div class="small muted" style="margin-bottom:6px">DEEPSEEK V4.1 — CED</div>
+      <div class="race" id="raceB"></div>
+      <div class="small" style="margin-top:8px">
+        work units: <span class="mono" id="workB" style="color:var(--cyan)">0</span>
+      </div>
+
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);display:grid;
+                  grid-template-columns:repeat(3,1fr);gap:14px">
+        <div><div class="small muted">layers over full sequence</div><div class="big std" id="layA">0</div></div>
+        <div><div class="small muted">layers over full sequence</div><div class="big ds" id="layB">0</div></div>
+        <div><div class="small muted">saving</div><div class="big ds" id="save">—</div></div>
+      </div>
+    </div>
+    <p class="small muted">Illustrative: a 12-layer stack, drawn to show the mechanism. The published
+      result is a reduction of prefill complexity from O(N·L) to roughly O(N·L/2), with the encoder's
+      sliding-window work bounded by bounded replay rather than by sequence length.</p>
+  </div>
+</section>
+
+<section id="shrink">
+  <div class="wrap">
+    <div class="eyebrow">Live · animated</div>
+    <h2>How the cache gets small</h2>
+    <p class="one-line">Three multiplicative reductions, applied one at a time.</p>
+    <p>Each mechanism multiplies the previous one. That is why the final number is so much smaller than
+      any single technique would suggest.</p>
+    <div class="card" style="padding:18px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+        <button class="btn" id="shrinkGo">▶ Apply each technique</button>
+        <button class="btn ghost sm" id="shrinkReset">Reset</button>
+      </div>
+      <div class="bars" id="shrinkBars"></div>
+      <div class="small muted" id="shrinkNote" style="margin-top:14px">Press the button to compress step
+        by step. Bar widths are illustrative of the three mechanisms, not a measured byte count.</div>
+    </div>
+    <div class="grid g3" style="margin-top:18px">
+      <div class="card"><div class="pill ds">× cross-layer reuse</div>
+        <p class="small" style="margin-top:10px">Layers stop each keeping their own global KV and indexer
+        keys. Only Full-mode layers produce them.</p></div>
+      <div class="card"><div class="pill ds">× sequence compression</div>
+        <p class="small" style="margin-top:10px">Every <span class="mono">m</span> positions collapse into
+        one compressed entry, so there are fewer entries to store in the first place.</p></div>
+      <div class="card"><div class="pill ds">× FP4 precision</div>
+        <p class="small" style="margin-top:10px">Roughly four bits per value instead of eight — and the
+        cache is dequantized before attention, so no special matmul support is needed.</p></div>
+    </div>
+  </div>
+</section>
+
 <section id="table">
   <div class="wrap">
     <div class="eyebrow">16 · Reference</div>
@@ -772,5 +842,6 @@
 
 </main>
 <script src="app.js"></script>
+<script src="anim.js"></script>
 </body>
 </html>
