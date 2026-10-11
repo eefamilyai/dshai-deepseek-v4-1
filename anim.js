@@ -27,6 +27,7 @@ function A(id, draw){
     c.setTransform(D,0,0,D,0,0);
   }
   fit(); addEventListener('resize',fit);
+  if('ResizeObserver' in window){ new ResizeObserver(fit).observe(cv); }
   if('IntersectionObserver' in window){
     new IntersectionObserver(function(e){ on=e[0].isIntersecting; },{threshold:0.01}).observe(cv);
   } else on=true;
@@ -54,12 +55,54 @@ function gd(c,W,H,st,al){
   for(var y=0;y<H;y+=st){ c.beginPath(); c.moveTo(0,y); c.lineTo(W,y); c.stroke(); }
 }
 function note(c,txt,W,H){
-  M(c,10.5); c.textAlign='left'; c.fillStyle='rgba(85,97,128,1)';
+  // shrink to fit rather than run off the edge
+  var maxW=W-48, size=10.5;
+  M(c,size);
+  while(c.measureText(txt).width>maxW && size>8){ size-=0.5; M(c,size); }
+  c.textAlign='left'; c.fillStyle='rgba(85,97,128,1)';
   c.fillText(txt, 24, H-20);
 }
 var BLUE='rgba(77,107,254,1)', CYAN='rgba(34,211,238,1)',
     AMBER='rgba(251,191,36,1)', GREEN='rgba(52,211,153,1)',
     ROSE='rgba(251,113,133,1)', DIM='rgba(85,97,128,1)';
+
+// ---------- no label may ever leave the canvas ----------
+// Every fillText is fitted to the room on the side it is anchored to, shrinking
+// the font only as far as it must and restoring it at once, so a caption tuned
+// for a wide canvas still reads on a narrow one instead of running off the edge.
+(function(){
+  if(typeof CanvasRenderingContext2D==='undefined') return;
+  var proto=CanvasRenderingContext2D.prototype, orig=proto.fillText, memo={};
+  function cssW(ctx){
+    var w=ctx.canvas?ctx.canvas.width:0;
+    try{ var m=ctx.getTransform(); if(m&&m.a) w=w/m.a; }catch(e){}
+    return w;
+  }
+  function widthOf(ctx,s,font){
+    var k=font+'|'+s, v=memo[k];
+    if(v===undefined){ v=ctx.measureText(s).width; if(Object.keys(memo).length>4000) memo={}; memo[k]=v; }
+    return v;
+  }
+  proto.fillText=function(text,x,y,maxW){
+    var s=(text==null?'':String(text));
+    if(!s) return orig.call(this,text,x,y,maxW);
+    var pad=10, W=cssW(this), limit;
+    if(maxW!=null && maxW>0) limit=maxW;
+    else if(this.textAlign==='right'||this.textAlign==='end') limit=x-pad;
+    else if(this.textAlign==='center') limit=2*Math.min(x-pad, W-x-pad);
+    else limit=W-x-pad;
+    if(!(limit>8)) return orig.call(this,text,x,y,maxW);
+    var font=this.font, w0=widthOf(this,s,font);
+    if(w0<=limit) return orig.call(this,text,x,y,maxW);
+    var fm=/^\s*(\d*\.?\d+)(px\s+.*)$/.exec(font);
+    if(!fm) return orig.call(this,text,x,y,maxW);
+    var size=parseFloat(fm[1]);
+    if(!(size>0)||!(w0>0)) return orig.call(this,text,x,y,maxW);
+    this.font=(size*limit/w0).toFixed(2)+fm[2];
+    orig.call(this,text,x,y,maxW);
+    this.font=font;
+  };
+})();
 
 // ---------- HERO: two stacks, one output ----------
 A('hero-art', function(c,W,H,t){
@@ -145,6 +188,14 @@ A('v2-art', function(c,W,H,t){
   c.clearRect(0,0,W,H); gd(c,W,H,48,.18);
   var L=10, bw=Math.min(190,W*.19), bh=Math.min(26,(H-150)/L);
   var ox=W*.26-bw/2, oy=52;
+  // The projection diagram is sized from the height left over after the caption,
+  // so its bottom row can never land on top of the caption line.
+  var band=H-52-46;
+  var phh=Math.max(22,Math.min(46,(band-30-36)/4));
+  var pgap=Math.max(10,Math.min(18,(band-30-4*phh)/3));
+  var pbox=Math.min(160,W*0.15);
+  var prx=Math.min(W*0.62, W-pbox-W*0.10-26);
+  var ry=52;
   var P=4.6, ph=(t%P)/P;
   for(var i=0;i<L;i++){
     var y=oy+i*(bh+5), enc=i<L/2;
@@ -154,15 +205,16 @@ A('v2-art', function(c,W,H,t){
     c.fillText(enc?'encoder '+(i+1):'decoder '+(i-L/2+1), ox+10, y+bh/2+4);
   }
   var midY=oy+(L/2)*(bh+5);
-  c.beginPath(); c.moveTo(ox-30,midY); c.lineTo(ox+bw+70,midY);
+  var lineEnd=Math.min(ox+bw+70, prx-24);
+  c.beginPath(); c.moveTo(ox-30,midY); c.lineTo(lineEnd,midY);
   c.strokeStyle='rgba(251,191,36,.6)'; c.lineWidth=1.5; c.setLineDash([6,5]); c.stroke();
   c.setLineDash([]);
-  M(c,10); c.textAlign='left'; c.fillStyle='rgba(251,191,36,.95)';
-  c.fillText('H(L/2) emitted', ox+bw+78, midY+4);
+  // right-aligned on the dashed line, so it can never reach the diagram
+  M(c,10); c.textAlign='right'; c.fillStyle='rgba(251,191,36,.95)';
+  c.fillText('H(L/2) emitted', lineEnd, midY+4);
 
   // the projection diagram on the right
-  var rx=W*.62, ry=H*.30;
-  var pbox=Math.min(150,W*.14), phh=44;
+  var rx=prx;
   // H(L/2) source
   bx(c,rx,ry,pbox,phh,7);
   c.fillStyle='rgba(77,107,254,.28)'; c.fill();
@@ -173,7 +225,7 @@ A('v2-art', function(c,W,H,t){
   // three decoder targets
   var pulse=.5+.5*Math.sin(t*2);
   for(var j=0;j<3;j++){
-    var ty=ry+90+j*(phh+16);
+    var ty=ry+phh+30+j*(phh+pgap);
     bx(c,rx+W*0.10,ty,pbox,phh,7);
     c.fillStyle='rgba(31,109,122,.8)'; c.fill();
     c.strokeStyle='rgba(34,211,238,.8)'; c.lineWidth=1.4; c.stroke();
@@ -182,7 +234,7 @@ A('v2-art', function(c,W,H,t){
     // arrow
     c.beginPath();
     c.moveTo(rx+pbox, ry+phh/2);
-    c.quadraticCurveTo(rx+W*0.05, ry+phh/2+40, rx+W*0.10, ty+phh/2);
+    c.quadraticCurveTo(rx+(W*0.10)/2, ry+phh/2+pgap*2.6, rx+W*0.10, ty+phh/2);
     c.strokeStyle='rgba(34,211,238,'+(0.28+0.42*pulse)+')'; c.lineWidth=1.6; c.stroke();
   }
   M(c,10); c.textAlign='left'; c.fillStyle=DIM;
@@ -192,11 +244,11 @@ A('v2-art', function(c,W,H,t){
 // ---------- 3 prefill race ----------
 A('v3-art', function(c,W,H,t){
   c.clearRect(0,0,W,H); gd(c,W,H,48,.14);
-  var L=12, bw=Math.min(46,(W-200)/L*0.8), bh=34;
-  var yA=H*0.30, yB=H*0.62;
+  var L=12, bw=Math.min(46,(W-260)/L*0.8), bh=34;
+  var yA=H*0.34, yB=H*0.62;
   var PER=4.2, ph=(t%PER)/PER;
   var stepA=Math.floor(ph*L*1.25), stepB=Math.floor(ph*L*1.25);
-  var ox=(W-bw*L-6*(L-1))/2;
+  var ox=Math.max(96,(W-bw*L-6*(L-1))/2);
   // left labels
   M(c,11); c.textAlign='right'; c.fillStyle='rgba(148,163,184,.9)';
   c.fillText('standard', ox-16, yA+bh/2+4);
@@ -284,7 +336,8 @@ A('v4-art', function(c,W,H,t){
 A('v5-art', function(c,W,H,t){
   c.clearRect(0,0,W,H); gd(c,W,H,48,.14);
   var N=64, cols=16, rows=4;
-  var cell=Math.min((W-220)/cols, (H-140)/rows);
+  var panelW=Math.min(150,W*0.19);
+  var cell=Math.min((W-100-panelW-40)/cols, (H-140)/rows);
   var ox=90, oy=52;
   var pool=[], i, r, cc;
   // build a deterministic candidate pool
@@ -314,7 +367,7 @@ A('v5-art', function(c,W,H,t){
   M(c,10.5); c.fillStyle='rgba(143,162,196,.85)';
   c.fillText('blocks keep their best score -> top blocks form a candidate pool', ox, oy+rows*cell+26);
   // right panel
-  var rx=ox+cols*cell+40;
+  var rx=W-24-panelW;
   M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
   c.fillText('POOL', rx, oy+8);
   S(c,Math.min(22,W/30)); c.fillStyle='rgba(34,211,238,1)';
@@ -340,7 +393,7 @@ A('v6-art', function(c,W,H,t){
           ['+ cross-layer reuse',2.6,'rgba(77,107,254,1)'],
           ['+ sequence compression',1.3,'rgba(34,211,238,1)'],
           ['+ FP4  =  V4.1-Flash',1.0,'rgba(52,211,153,1)']];
-  var padL=Math.min(220,W*.22), padR=150;
+  var padL=Math.max(168, Math.min(215, W*0.28)), padR=96;
   var gw=W-padL-padR, x0=padL;
   var bh=Math.min(30,(H-120)/ST.length-8);
   var oy=54;
@@ -359,10 +412,10 @@ A('v6-art', function(c,W,H,t){
     c.fillText(ST[i][1]===100?'1x':('1/'+Math.round(100/ST[i][1]))+'x', x0+w+12, y+bh/2+4);
   }
   M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
-  c.fillText('global KV per token, drawn to scale from the published comparison (V1 baseline = 100)', padL-16, H-22);
+  c.fillText('global KV per token, drawn to scale from the published comparison (V1 baseline = 100)', 24, H-22);
   if(reveal>=ST.length){
     S(c,15); c.textAlign='left'; c.fillStyle='rgba(52,211,153,1)';
-    c.fillText('890 bytes / token', padL-16, oy+ST.length*(bh+10)+16);
+    c.fillText('890 bytes / token', 24, oy+ST.length*(bh+10)+16);
   }
 });
 
@@ -416,7 +469,7 @@ A('v8-art', function(c,W,H,t){
   c.clearRect(0,0,W,H); gd(c,W,H,48,.14);
   var L=10, nwin=8;
   var topY=H*.28, botY=H*.72;
-  var cw=Math.min(34,(W-200)/(L*nwin*0.55));
+  var cw=Math.min(34,(W-150-130)/(L*nwin));
   var ox=90;
   // EXACT: L x nwin replayed tokens
   M(c,11); c.textAlign='left'; c.fillStyle='rgba(148,163,184,.95)';
@@ -443,9 +496,9 @@ A('v8-art', function(c,W,H,t){
     c.fillStyle= on2?'rgba(34,211,238,.75)':'rgba(11,17,32,.8)'; c.fill();
     c.strokeStyle='rgba(24,35,58,.8)'; c.lineWidth=.6; c.stroke();
   }
-  // saving callout
-  var rx=ox+L*nwin*cw+36;
-  M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
+  // saving callout, anchored to the right edge so it is always inside
+  var rx=W-24;
+  M(c,10.5); c.textAlign='right'; c.fillStyle=DIM;
   c.fillText('PERSISTENT', rx, botY-34);
   S(c,Math.min(22,W/30)); c.fillStyle='rgba(52,211,153,1)';
   c.fillText('1/8', rx, botY-6);
@@ -541,7 +594,7 @@ A('v10-art', function(c,W,H,t){
   c.fillText('hash', hx+35, ty+30);
 
   // embedding tables
-  var tx2=hx+90, cols=6, rows=4, cell=Math.min(34,(W-tx2-120)/cols);
+  var tx2=hx+90, cols=6, rows=4, cell=Math.min(30,(W-tx2-170)/cols);
   var oy2=ty-20;
   var actRow=Math.floor(ph*rows);
   for(var r=0;r<rows;r++) for(var cc=0;cc<cols;cc++){
@@ -553,9 +606,9 @@ A('v10-art', function(c,W,H,t){
     c.strokeStyle='rgba(24,35,58,.8)'; c.lineWidth=.7; c.stroke();
   }
   M(c,10.5); c.textAlign='left'; c.fillStyle='rgba(143,162,196,.9)';
-  c.fillText('hash-indexed tables  ·  8 heads  ·  ~16M entries each  ·  FP8', tx2, oy2-12);
+  c.fillText('hash-indexed tables  ·  8 heads  ·  ~16M entries each  ·  FP8', tx2, oy2-12, sx-tx2-18);
   // stats
-  var sx=W-140;
+  var sx=W-130;
   M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
   c.fillText('ENGRAM', sx, ty+6);
   S(c,Math.min(24,W/28)); c.fillStyle='rgba(251,191,36,1)';
@@ -614,7 +667,7 @@ A('v11-art', function(c,W,H,t){
   bx(c,ox,vy,vw,30,6);
   c.fillStyle='rgba(77,107,254,.85)'; c.fill();
   M(c,11); c.textAlign='left'; c.fillStyle='rgba(238,243,255,.95)';
-  c.fillText('verification length: '+accepted+' of '+N+' — chosen per request by the scheduler', ox+12, vy+20);
+  c.fillText('verification length: '+accepted+' of '+N+' — scheduler-chosen per request', ox+12, vy+20);
   M(c,10.5); c.textAlign='left'; c.fillStyle=DIM;
   c.fillText('accepted tokens are forward passes you never had to run', 24, H-20);
 });
